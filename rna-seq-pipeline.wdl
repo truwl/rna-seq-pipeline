@@ -2,13 +2,17 @@ version 1.0
 
 # ENCODE DCC RNA-seq pipeline
 
+#CAPER docker encodedcc/rna-seq-pipeline:v1.2.1
+#CAPER singularity docker://encodedcc/rna-seq-pipeline:v1.2.1
+#CROO out_def https://storage.googleapis.com/encode-pipeline-output-definition/bulkrna.output_definition.json
+
+import "./aggregate.wdl" as aggregate
+import "./rnaseqc2.wdl" as rnaseqc2
+
 workflow rna {
     meta {
         author: "Otto Jolanki"
-        version: "1.2.3"
-        caper_docker: "encodedcc/rna-seq-pipeline:1.2.3"
-        caper_singularity: "encodedcc/rna-seq-pipeline:v1.2.3"
-        croo_out_def: "https://storage.googleapis.com/encode-pipeline-output-definition/bulkrna.output_definition.json"
+        version: "v1.2.1"
     }
 
     input {
@@ -58,7 +62,27 @@ workflow rna {
         # These are for internal use, leave undefined
         Int? kallisto_fragment_length_undefined
         Float? kallisto_sd_undefined
+		
+		#truwl specific
+	    String job_id
+	    String workflow_instance_identifier
+	    String workflow_identifier
+		File Rscript_madqcagg
+		File Rscript_rnaseqcagg
+		
+		#rnaseqc
+		File genes_gtf
     }
+	
+	output {
+		File talltable = glueme.talltable
+		Array[File]? quants = kallisto.quants
+        Array[File] annobam = align.annobam
+		
+        Array[File] genes_results = rsem_quant.genes_results
+        Array[File] isoforms_results = rsem_quant.genes_results
+		File? madQCplot = mad_qc.madQCplot
+	}
 
     # dummy variable value for the single-ended case
     Array[Array[File]] fastqs_R2_ = if (endedness == "single") then fastqs_R1 else fastqs_R2
@@ -74,20 +98,28 @@ workflow rna {
             ramGB=align_ramGB,
             disks=align_disk,
         }
-
-        call samtools_quickcheck as check_genome { input:
-            bam=align.genomebam,
-            ncpus=bam_to_signals_ncpus,
-            ramGB=bam_to_signals_ramGB,
-            disks=bam_to_signals_disk,
-        }
-
-        call samtools_quickcheck as check_anno { input:
-            bam=align.annobam,
-            ncpus=bam_to_signals_ncpus,
-            ramGB=bam_to_signals_ramGB,
-            disks=bam_to_signals_disk,
-        }
+		
+		call rnaseqc2.rnaseqc2 as broadrnaseqc {
+			input:
+			    bam_file = align.genomebam,
+				sample_id = "rep"+(i+1)+bamroot,
+			    genes_gtf = genes_gtf,
+				
+			    memory=rsem_ramGB,
+			    num_threads=rsem_ncpus,
+			    num_preempt=3
+		}
+		
+		call aggregate.melt as rnaseqcmelt {
+		    input:
+		      job_id = job_id,
+		      workflow_instance_identifier = workflow_instance_identifier,
+		      workflow_identifier = workflow_identifier,
+			  rep = "rep"+i,
+			  test = "rnaseqc2",
+		      qcfile = broadrnaseqc.metrics,
+		      Rscript_aggregate = Rscript_rnaseqcagg
+		}
 
         call bam_to_signals { input:
             input_bam=align.genomebam,
@@ -143,15 +175,45 @@ workflow rna {
     }
 
     scatter (i in range(length(align.annobam))) {
-        call rna_qc { input:
+        call rna_qc as rna_qc_rep { input:
             input_bam=align.annobam[i],
             tr_id_to_gene_type_tsv=rna_qc_tr_id_to_gene_type_tsv,
             output_filename="rep"+(i+1)+bamroot+"_qc.json",
             disks=rna_qc_disk,
         }
+		call aggregate.melt as madqcmelt {
+		    input:
+		      job_id = job_id,
+		      workflow_instance_identifier = workflow_instance_identifier,
+		      workflow_identifier = workflow_identifier,
+			  rep = "rep"+i,
+			  test = "madqc",
+		      qcfile = rna_qc_rep.rnaQC,
+		      Rscript_aggregate = Rscript_madqcagg
+		}
     }
+	call catfiles as glueme { input: array_of_files=flatten([madqcmelt.talltable,rnaseqcmelt.talltable]) }
+	
+
 }
 
+task catfiles {
+  input {
+  Array[File] array_of_files
+  }
+
+  command {
+   awk '!/^WorkflowId/ || !f++' ${sep=' ' array_of_files} > truwlbenchmarks.txt
+  }
+
+  output {
+  File talltable = "truwlbenchmarks.txt"
+  }
+
+  runtime {
+  docker: "ubuntu:latest"
+  }
+}
 
 task align {
     input {
@@ -186,25 +248,6 @@ task align {
         File anno_flagstat_json = "~{bamroot}_anno_flagstat.json"
         File log_json = "~{bamroot}_Log.final.json"
         File python_log = "align.log"
-    }
-
-    runtime {
-      cpu: ncpus
-      memory: "~{ramGB} GB"
-      disks : select_first([disks,"local-disk 100 SSD"])
-    }
-}
-
-task samtools_quickcheck {
-    input {
-        File bam
-        Int ncpus
-        Int ramGB
-        String? disks
-    }
-
-    command {
-        samtools quickcheck ~{bam}
     }
 
     runtime {
@@ -381,3 +424,6 @@ task rna_qc {
         disks: select_first([disks, "local-disk 100 SSD"])
     }
 }
+
+	  
+
