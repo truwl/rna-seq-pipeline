@@ -67,8 +67,8 @@ workflow rna {
 	    String job_id
 	    String workflow_instance_identifier
 	    String workflow_identifier
-		File Rscript_madqcagg
-		File Rscript_rnaseqcagg
+		File Rscript_madqcagg = "https://raw.githubusercontent.com/truwl/rna-seq-pipeline/rnabenchmarke/src/madqcagg.R"
+		File Rscript_rnaseqcagg = "https://raw.githubusercontent.com/truwl/rna-seq-pipeline/rnabenchmarke/src/rnaseqcagg.R"
 		
 		#rnaseqc
 		File genes_gtf
