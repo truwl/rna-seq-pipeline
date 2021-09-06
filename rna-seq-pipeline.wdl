@@ -118,7 +118,8 @@ workflow rna {
 			  rep = "rep"+i,
 			  test = "rnaseqc2",
 		      qcfile = broadrnaseqc.metrics,
-		      Rscript_aggregate = Rscript_rnaseqcagg
+		      Rscript_aggregate = Rscript_rnaseqcagg,
+              output_prefix = "rnaseqc"
 		}
 
         call bam_to_signals { input:
@@ -189,7 +190,8 @@ workflow rna {
 			  rep = "rep"+i,
 			  test = "madqc",
 		      qcfile = rna_qc_rep.rnaQC,
-		      Rscript_aggregate = Rscript_madqcagg
+		      Rscript_aggregate = Rscript_madqcagg,
+              output_prefix = "madqc"
 		}
     }
 	call catfiles as glueme { input: array_of_files=flatten([madqcmelt.talltable,rnaseqcmelt.talltable]) }
